@@ -1,0 +1,143 @@
+import boto3
+import json
+from custom_encoder import CustomEncoder
+import os
+import logging
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+dynamodbTableName = 'process_automation_quail'
+dynamodb = boto3.resource('dynamodb')
+table = dynamodb.Table(dynamodbTableName)
+
+getMethod = "GET"
+postMethod = 'POST'
+patchMethod = 'PATCH'
+deleteMethod = 'DELETE'
+
+healthPatch = '/health'
+processPath = '/process'
+processesPath = '/processes'
+  
+def lambda_handler(event, context):
+    logger.info(event)
+    httpMethod = event['httpMethod']
+    path = event['path']
+    
+    if httpMethod == getMethod and path == healthPatch:
+        response = buildResponse(288)
+    elif httpMethod == getMethod and path == processPath:
+        respose = getProcess(event['queryStringParameters']['id_process'])
+    elif httpMethod == getMethod and path == processesPath:
+        response = getProcesses()
+    elif httpMethod == postMethod and path == processPath:
+        response = saveProcess(json.loads(event['body']))
+    elif httpMethod == patchMethod and path == processPath:
+        requestBody = json.loads(event['body'])
+        response = modifyProcess(requestBody['id_process'], requestBody['updateKey'], requestBody['updateValue'])
+    elif httpMethod == deleteMethod and path == processPath:
+        requestBody = json.loads(event['body'])
+        response = deleteProcess(requestBody['id_process'])
+    else:
+        response = buildResponse(484, 'Not Found')
+    
+    return response
+        
+def getProcess(id_process):
+    try:
+        response = table.get_item(
+            Key={
+                'id_process': id_process
+            }
+        )
+        if 'Item' in response:
+            return buildResponse(288, response['Item'])
+        else:
+            return buildResponse(484, {'Message': 'Product id: %s not found' % id_process})        
+    except:
+        logger.exception('Error en el getProduct')
+
+
+def getProcesses():
+    try:
+        response = table.scan()
+        result = response['Items']
+        
+        while 'LastEvaluatedKey' in response:
+            response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
+            result.extend(response['Items'])
+            
+        body = {
+            'products': result
+        }
+        return buildResponse(200, body)
+    except:
+        logger.exception('Error en el getproducts')
+        
+def saveProcess(requestBody):
+    try:
+        table.put_item(Item=requestBody)
+        body = {
+            'Operacion': 'SAVE',
+            'Message': 'SUCCESS',
+            'Item': requestBody
+        }
+        return buildResponse(200, body)
+    except:
+        logger.exception('Error en el saveProduct')
+        
+def modifyProcess(id_process, updateKey, updateValue):
+    try:
+        response = table.update_item(
+            Key={
+                'id_process' : id_process
+            },
+            UpdateExpression='set %s = :value' % updateKey,
+            ExpressionAttributeValues={
+                ':value': updateValue
+            },
+            ReturnValues='UPDATED_NEW'
+        )
+        body = {
+            'Operation': 'UPDATE',
+            'Message': 'SUCCESS',
+            'UpdatedAttrebutes': response
+        }
+        return buildResponse(200, body)
+    except:
+        logger.exception('Error en el modifyProduct')
+        
+def deleteProcess(id_process):
+    try:
+        response = table.delete_item(
+            Key={
+                'id_process': id_process
+            },
+            ReturnValues='ALL_OLD'
+        )
+        body = {
+            'Operation': 'DELETE',
+            'Message': 'SUCCESS',
+            'UpdatedAttrebutes': response
+        }
+        return buildResponse(200, body)
+    except:
+        logger.exception('Error en el deleteProduct')
+        
+    
+        
+def buildResponse(statusCode, body=None):
+    response = {
+        'statusCode': statusCode,
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+        }
+    }
+    if body is not None:
+        response['body'] = json.dumps(body, cls=CustomEncoder)
+    return response
+    
+
+    
